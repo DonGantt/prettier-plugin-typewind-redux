@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createRequire } from 'module';
 import type { TypewindMetadata } from './metadata';
 
 const CONFIG_CANDIDATES = ['tailwind.config.js', 'tailwind.config.cjs', 'tailwind.config.mjs'];
@@ -107,19 +108,20 @@ export function buildV3Metadata(cwd: string = process.cwd()): TypewindMetadata |
 
   try {
     const configDir = path.dirname(configPath);
-    const requireFromProject = (id: string) => require(require.resolve(id, { paths: [configDir] }));
+    const projectRequire = createRequire(path.join(configDir, 'package.json'));
+    const requireFromProject = (id: string) => projectRequire(projectRequire.resolve(id, { paths: [configDir] }));
 
     const resolveConfig = requireFromProject('tailwindcss/resolveConfig');
     const { createContext } = requireFromProject('tailwindcss/lib/lib/setupContextUtils');
     const { generateRules } = requireFromProject('tailwindcss/lib/lib/generateRules');
     const postcss = requireFromProject('postcss');
 
-    const cacheKeysBefore = new Set(Object.keys(require.cache));
-    delete require.cache[require.resolve(configPath)];
-    const userConfig = require(configPath);
-    for (const key of Object.keys(require.cache)) {
+    const cacheKeysBefore = new Set(Object.keys(projectRequire.cache));
+    delete projectRequire.cache[projectRequire.resolve(configPath)];
+    const userConfig = projectRequire(configPath);
+    for (const key of Object.keys(projectRequire.cache)) {
       if (!cacheKeysBefore.has(key) && !key.includes(`${path.sep}node_modules${path.sep}`)) {
-        delete require.cache[key];
+        delete projectRequire.cache[key];
       }
     }
     const ctx: TailwindV3Context = createContext(resolveConfig(userConfig.default ?? userConfig));
@@ -163,7 +165,7 @@ export function buildV3Metadata(cwd: string = process.cwd()): TypewindMetadata |
         const rules = generateRules(new Set([kebab]), ctx);
         if (rules.length === 0) continue;
         root = postcss.root();
-        for (const [, rule] of rules) root.append(rule.clone());
+        root.append(rules[0][1].clone());
       } catch {
         continue;
       }
