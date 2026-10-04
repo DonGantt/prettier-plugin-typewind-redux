@@ -61,5 +61,8 @@
     "typewind-v4": {
       "optional": true
     }
+  },
+  "overrides": {
+    "@octokit/core": "5.2.1"
   }
 }
