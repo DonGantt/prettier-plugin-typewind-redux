@@ -1,4 +1,6 @@
 import * as fs from 'fs';
+import * as path from 'path';
+import { createRequire } from 'module';
 import { buildV3Metadata, getConfigFingerprint } from './v3-adapter';
 
 export interface TypewindMetadata {
@@ -20,7 +22,8 @@ let lastV3CheckAt = 0;
 
 function loadV4Metadata(): TypewindMetadata | null {
   try {
-    const metaPath = require.resolve('typewind-v4/dist/_metadata.json');
+    const projectRequire = createRequire(path.join(process.cwd(), 'package.json'));
+    const metaPath = projectRequire.resolve('typewind-v4/dist/_metadata.json');
     const raw = fs.readFileSync(metaPath, 'utf8');
     return JSON.parse(raw) as TypewindMetadata;
   } catch {
