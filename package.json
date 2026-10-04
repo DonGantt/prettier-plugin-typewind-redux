@@ -2,6 +2,10 @@
   "name": "prettier-plugin-typewind-redux",
   "version": "0.1.1",
   "description": "Prettier plugin for typewind (v3) and typewind-v4 — sorts tw. property chains into canonical Tailwind order",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DonGantt/prettier-plugin-typewind-redux.git"
+  },
   "types": "dist/index.d.ts",
   "main": "dist/index.js",
   "files": [
