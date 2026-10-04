@@ -42,14 +42,34 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Determine release-it increment mode
+        id: increment
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$LATEST_TAG" = "$PKG_VERSION" ]; then
+            echo "flag=--increment=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=--no-increment" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Bump version, tag, and create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release -- --ci --increment=patch
+        run: npm run release -- --ci ${{ steps.increment.outputs.flag }}
 
       - name: Capture new tag
         id: tag
         run: echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+
+      - name: Sync version bump back into development
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch origin development --quiet
+          git checkout development
+          git merge main --no-edit
+          git push origin development
 
   publish:
     needs: release

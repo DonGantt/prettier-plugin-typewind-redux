@@ -38,10 +38,13 @@ var import_typescript = require("prettier/plugins/typescript");
 
 // src/utils/metadata.ts
 var fs2 = __toESM(require("fs"));
+var path2 = __toESM(require("path"));
+var import_module2 = require("module");
 
 // src/utils/v3-adapter.ts
 var fs = __toESM(require("fs"));
 var path = __toESM(require("path"));
+var import_module = require("module");
 var CONFIG_CANDIDATES = ["tailwind.config.js", "tailwind.config.cjs", "tailwind.config.mjs"];
 var MAX_UPWARD_SEARCH_DEPTH = 10;
 function findTailwindConfig(startDir) {
@@ -255,17 +258,18 @@ function buildV3Metadata(cwd = process.cwd()) {
   if (!configPath) return null;
   try {
     const configDir = path.dirname(configPath);
-    const requireFromProject = (id) => require(require.resolve(id, { paths: [configDir] }));
+    const projectRequire = (0, import_module.createRequire)(path.join(configDir, "package.json"));
+    const requireFromProject = (id) => projectRequire(projectRequire.resolve(id, { paths: [configDir] }));
     const resolveConfig = requireFromProject("tailwindcss/resolveConfig");
     const { createContext } = requireFromProject("tailwindcss/lib/lib/setupContextUtils");
     const { generateRules } = requireFromProject("tailwindcss/lib/lib/generateRules");
     const postcss = requireFromProject("postcss");
-    const cacheKeysBefore = new Set(Object.keys(require.cache));
-    delete require.cache[require.resolve(configPath)];
-    const userConfig = require(configPath);
-    for (const key of Object.keys(require.cache)) {
+    const cacheKeysBefore = new Set(Object.keys(projectRequire.cache));
+    delete projectRequire.cache[projectRequire.resolve(configPath)];
+    const userConfig = projectRequire(configPath);
+    for (const key of Object.keys(projectRequire.cache)) {
       if (!cacheKeysBefore.has(key) && !key.includes(`${path.sep}node_modules${path.sep}`)) {
-        delete require.cache[key];
+        delete projectRequire.cache[key];
       }
     }
     const ctx = createContext(resolveConfig(userConfig.default ?? userConfig));
@@ -296,7 +300,7 @@ function buildV3Metadata(cwd = process.cwd()) {
         const rules = generateRules(/* @__PURE__ */ new Set([kebab]), ctx);
         if (rules.length === 0) continue;
         root = postcss.root();
-        for (const [, rule] of rules) root.append(rule.clone());
+        root.append(rules[0][1].clone());
       } catch {
         continue;
       }
@@ -340,7 +344,8 @@ var cachedV3Fingerprint;
 var lastV3CheckAt = 0;
 function loadV4Metadata() {
   try {
-    const metaPath = require.resolve("typewind-v4/dist/_metadata.json");
+    const projectRequire = (0, import_module2.createRequire)(path2.join(process.cwd(), "package.json"));
+    const metaPath = projectRequire.resolve("typewind-v4/dist/_metadata.json");
     const raw = fs2.readFileSync(metaPath, "utf8");
     return JSON.parse(raw);
   } catch {
