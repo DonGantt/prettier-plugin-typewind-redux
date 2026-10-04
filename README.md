@@ -1,6 +1,6 @@
 # prettier-plugin-typewind-redux
 
-A Prettier plugin for [typewind](https://github.com/DonGantt/typewind) and [typewind-v4](https://github.com/DonGantt/typewind), the zero-runtime, type-safe Tailwind CSS wrapper — for projects on either Tailwind v3 (`typewind`) or Tailwind v4 (`typewind-v4`).
+A Prettier plugin for [typewind](https://github.com/Mokshit06/typewind) and [typewind-v4](https://github.com/DonGantt/typewind), the zero-runtime, type-safe Tailwind CSS wrapper — for projects on either Tailwind v3 (`typewind`) or Tailwind v4 (`typewind-v4`).
 
 Sorts consecutive `tw.<prop>` chains into the same canonical order Tailwind CSS itself registers its utilities in — the equivalent of `prettier-plugin-tailwindcss`'s class sorting, but for typewind's typed `tw.` API instead of string class lists.
 
