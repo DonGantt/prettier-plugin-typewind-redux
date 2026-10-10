@@ -480,11 +480,39 @@ function findTwLocalName(ast) {
   }
   return "tw";
 }
-function wrapParser(parser) {
-  return {
-    ...parser,
-    parse(text, options) {
-      const ast = parser.parse(text, options);
+var ownParsers = /* @__PURE__ */ new Set();
+var FALLBACK_PARSERS = {
+  babel: babelParsers.babel,
+  "babel-ts": babelParsers["babel-ts"],
+  typescript: typescriptParsers.typescript
+};
+async function resolveParserCandidate(candidate) {
+  if (!candidate) return void 0;
+  if (typeof candidate.parse === "function") return candidate;
+  if (typeof candidate === "function") {
+    const resolved = await candidate();
+    if (resolved && typeof resolved.parse === "function") return resolved;
+  }
+  return void 0;
+}
+async function resolveBaseParser(name, options) {
+  const plugins = options.plugins ?? [];
+  let base;
+  for (const candidatePlugin of plugins) {
+    if (!candidatePlugin) continue;
+    const rawCandidate = candidatePlugin.parsers?.[name];
+    if (rawCandidate && ownParsers.has(rawCandidate)) continue;
+    const resolved = await resolveParserCandidate(rawCandidate);
+    if (resolved && !ownParsers.has(resolved)) base = resolved;
+  }
+  return base ?? FALLBACK_PARSERS[name];
+}
+function wrapParser(name) {
+  const wrapped = {
+    ...FALLBACK_PARSERS[name],
+    async parse(text, options) {
+      const base = await resolveBaseParser(name, options);
+      const ast = await base.parse(text, options);
       const metadata = loadTypewindMetadata();
       if (metadata) {
         const twLocalName = findTwLocalName(ast);
@@ -493,15 +521,19 @@ function wrapParser(parser) {
       return ast;
     }
   };
+  ownParsers.add(wrapped);
+  return wrapped;
 }
 var plugin = {
   parsers: {
-    babel: wrapParser(babelParsers.babel),
-    "babel-ts": wrapParser(babelParsers["babel-ts"]),
-    typescript: wrapParser(typescriptParsers.typescript)
+    babel: wrapParser("babel"),
+    "babel-ts": wrapParser("babel-ts"),
+    typescript: wrapParser("typescript")
   }
 };
+var { parsers } = plugin;
 var index_default = plugin;
 export {
-  index_default as default
+  index_default as default,
+  parsers
 };
