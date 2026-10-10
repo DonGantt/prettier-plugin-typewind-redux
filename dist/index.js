@@ -30,7 +30,8 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // src/index.ts
 var index_exports = {};
 __export(index_exports, {
-  default: () => index_default
+  default: () => index_default,
+  parsers: () => parsers
 });
 module.exports = __toCommonJS(index_exports);
 var import_babel = require("prettier/plugins/babel");
@@ -514,11 +515,39 @@ function findTwLocalName(ast) {
   }
   return "tw";
 }
-function wrapParser(parser) {
-  return {
-    ...parser,
-    parse(text, options) {
-      const ast = parser.parse(text, options);
+var ownParsers = /* @__PURE__ */ new Set();
+var FALLBACK_PARSERS = {
+  babel: import_babel.parsers.babel,
+  "babel-ts": import_babel.parsers["babel-ts"],
+  typescript: import_typescript.parsers.typescript
+};
+async function resolveParserCandidate(candidate) {
+  if (!candidate) return void 0;
+  if (typeof candidate.parse === "function") return candidate;
+  if (typeof candidate === "function") {
+    const resolved = await candidate();
+    if (resolved && typeof resolved.parse === "function") return resolved;
+  }
+  return void 0;
+}
+async function resolveBaseParser(name, options) {
+  const plugins = options.plugins ?? [];
+  let base;
+  for (const candidatePlugin of plugins) {
+    if (!candidatePlugin) continue;
+    const rawCandidate = candidatePlugin.parsers?.[name];
+    if (rawCandidate && ownParsers.has(rawCandidate)) continue;
+    const resolved = await resolveParserCandidate(rawCandidate);
+    if (resolved && !ownParsers.has(resolved)) base = resolved;
+  }
+  return base ?? FALLBACK_PARSERS[name];
+}
+function wrapParser(name) {
+  const wrapped = {
+    ...FALLBACK_PARSERS[name],
+    async parse(text, options) {
+      const base = await resolveBaseParser(name, options);
+      const ast = await base.parse(text, options);
       const metadata = loadTypewindMetadata();
       if (metadata) {
         const twLocalName = findTwLocalName(ast);
@@ -527,12 +556,19 @@ function wrapParser(parser) {
       return ast;
     }
   };
+  ownParsers.add(wrapped);
+  return wrapped;
 }
 var plugin = {
   parsers: {
-    babel: wrapParser(import_babel.parsers.babel),
-    "babel-ts": wrapParser(import_babel.parsers["babel-ts"]),
-    typescript: wrapParser(import_typescript.parsers.typescript)
+    babel: wrapParser("babel"),
+    "babel-ts": wrapParser("babel-ts"),
+    typescript: wrapParser("typescript")
   }
 };
+var { parsers } = plugin;
 var index_default = plugin;
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  parsers
+});
