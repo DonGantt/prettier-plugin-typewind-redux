@@ -167,3 +167,131 @@ describe('sortTwChains', () => {
     expect(nonNull.expression.property.name).toBe('items_center');
   });
 });
+
+describe('sortTwChains with variantOrder (real cross-call-boundary reordering)', () => {
+  // Matches the real engine's observed relative order: group-hover < hover <
+  // focus < sm < dark, with `*`/`**` (children/descendants) tiered too.
+  const variantMetadata: TypewindMetadata = {
+    variants: ['*', '**', 'group-hover', 'hover', 'focus', 'sm', 'dark'],
+    classSet: [],
+    valueIndex: {},
+    rootFontSize: 16,
+    classOrder: ['flex', 'items_center', 'justify_center', 'gap_3', 'bg_gray_500', 'text_gray_200'],
+    variantOrder: ['*', '**', 'group-hover', 'hover', 'focus', 'sm', 'dark'],
+  };
+
+  it('moves a bare utility before a variant-wrapped call it was written after', () => {
+    const ast = parse(`const x = tw.hover(tw.bg_gray_500).items_center;`);
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.type).toBe('CallExpression');
+    expect(outer.callee.property.name).toBe('hover');
+    expect(outer.callee.object.property.name).toBe('items_center');
+    expect(outer.callee.object.object.type).toBe('Identifier');
+    expect(outer.arguments[0].property.name).toBe('bg_gray_500');
+  });
+
+  it('reorders two variant-wrapped calls relative to each other by real variant tier', () => {
+    const ast = parse(`const x = tw.focus(tw.bg_gray_500).hover(tw.text_gray_200);`);
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.type).toBe('CallExpression');
+    expect(outer.callee.property.name).toBe('focus');
+    expect(outer.arguments[0].property.name).toBe('bg_gray_500');
+
+    const inner = outer.callee.object;
+    expect(inner.type).toBe('CallExpression');
+    expect(inner.callee.property.name).toBe('hover');
+    expect(inner.arguments[0].property.name).toBe('text_gray_200');
+    expect(inner.callee.object.type).toBe('Identifier');
+  });
+
+  it('sorts bares among themselves and calls among themselves in one mixed run', () => {
+    const ast = parse(
+      `const x = tw.items_center.focus(tw.bg_gray_500).flex.hover(tw.text_gray_200);`
+    );
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.type).toBe('CallExpression');
+    expect(outer.callee.property.name).toBe('focus');
+
+    const hoverCall = outer.callee.object;
+    expect(hoverCall.type).toBe('CallExpression');
+    expect(hoverCall.callee.property.name).toBe('hover');
+
+    const itemsCenter = hoverCall.callee.object;
+    expect(itemsCenter.property.name).toBe('items_center');
+    expect(itemsCenter.object.property.name).toBe('flex');
+  });
+
+  it('keeps an arbitrary-value boundary fixed while sorting calls on each side', () => {
+    // Both sides are written in the WRONG order (higher tier closer to root)
+    // and must independently correct: left -> hover then focus; right -> sm then dark.
+    const ast = parse(
+      `const x = tw.focus(tw.bg_gray_500).hover(tw.text_gray_200).gap_['12px'].dark(tw.items_center).sm(tw.flex);`
+    );
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+
+    // Right side of the boundary: sm (lower tier) innermost, dark outermost.
+    expect(outer.callee.property.name).toBe('dark');
+    const smCall = outer.callee.object;
+    expect(smCall.callee.property.name).toBe('sm');
+    const bracket = smCall.callee.object;
+    expect(bracket.computed).toBe(true);
+    expect(bracket.property.value).toBe('12px');
+
+    // Left side of the boundary: hover (lower tier) innermost, focus outermost.
+    const gapMarker = bracket.object;
+    expect(gapMarker.property.name).toBe('gap_');
+    const focusCall = gapMarker.object;
+    expect(focusCall.callee.property.name).toBe('focus');
+    const hoverCall = focusCall.callee.object;
+    expect(hoverCall.callee.property.name).toBe('hover');
+    expect(hoverCall.callee.object.type).toBe('Identifier');
+  });
+
+  it('never moves a terminal .toString() call, but still sorts the run before it', () => {
+    const ast = parse(`const x = tw.items_center.flex.toString();`);
+    sortTwChains(ast, 'tw', variantMetadata);
+    const call = programBody(ast)[0].declarations[0].init;
+    expect(call.type).toBe('CallExpression');
+    expect(call.callee.property.name).toBe('toString');
+    expect(call.callee.object.property.name).toBe('items_center');
+    expect(call.callee.object.object.property.name).toBe('flex');
+  });
+
+  it('resolves a 2-arg named compound variant call by its base variant tier', () => {
+    const ast = parse(
+      `const x = tw.focus(tw.bg_gray_500).group_hover_named('sidebar', tw.text_gray_200);`
+    );
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.callee.property.name).toBe('focus');
+    const namedCall = outer.callee.object;
+    expect(namedCall.callee.property.name).toBe('group_hover_named');
+    expect(namedCall.arguments[0].value).toBe('sidebar');
+    expect(namedCall.arguments[1].property.name).toBe('text_gray_200');
+    expect(namedCall.callee.object.type).toBe('Identifier');
+  });
+
+  it('resolves .children(...)/.descendants(...) to the real */** variant tiers', () => {
+    const ast = parse(`const x = tw.children(tw.flex).items_center;`);
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.type).toBe('CallExpression');
+    expect(outer.callee.property.name).toBe('children');
+    expect(outer.callee.object.property.name).toBe('items_center');
+    expect(outer.arguments[0].property.name).toBe('flex');
+  });
+
+  it('treats an unmapped/unknown variant call as a boundary, same as before', () => {
+    const ast = parse(`const x = tw.flex.sm2(tw.text_gray_200).items_center;`);
+    sortTwChains(ast, 'tw', variantMetadata);
+    const outer = programBody(ast)[0].declarations[0].init;
+    expect(outer.property.name).toBe('items_center');
+    const call = outer.object;
+    expect(call.callee.property.name).toBe('sm2');
+    expect(call.callee.object.property.name).toBe('flex');
+  });
+});
