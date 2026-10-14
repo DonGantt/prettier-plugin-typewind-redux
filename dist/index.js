@@ -437,37 +437,137 @@ function nextChainLink(node) {
 function isChainLink(node) {
   return isMemberLike(node) || isCallLike(node) || node.type === "TSNonNullExpression";
 }
-var orderMapCache = /* @__PURE__ */ new WeakMap();
-function getOrderMap(metadata) {
-  let map = orderMapCache.get(metadata);
-  if (!map) {
-    map = /* @__PURE__ */ new Map();
-    const order = metadata.classOrder ?? [];
-    order.forEach((name, i) => map.set(name, i));
-    orderMapCache.set(metadata, map);
-  }
-  return map;
-}
-function getClassOrderIndex(orderMap, name) {
-  const idx = orderMap.get(name);
-  return idx === void 0 ? Number.MAX_SAFE_INTEGER : idx;
-}
 function isPlainPropAccess(node) {
   return isMemberLike(node) && node.computed === false && node.optional !== true && isNode(node.property) && node.property.type === "Identifier";
 }
-function sortRun(nodes, orderMap) {
-  if (nodes.length < 2) return;
-  const names = nodes.map((n) => n.property.name);
-  const sorted = [...names].sort(
-    (a, b) => getClassOrderIndex(orderMap, a) - getClassOrderIndex(orderMap, b)
-  );
-  nodes.forEach((node, i) => {
-    node.property.name = sorted[i];
-  });
+var orderMapCache = /* @__PURE__ */ new WeakMap();
+function getOrderMap(order) {
+  if (!order) return null;
+  let map = orderMapCache.get(order);
+  if (!map) {
+    map = /* @__PURE__ */ new Map();
+    order.forEach((name, i) => map.set(name, i));
+    orderMapCache.set(order, map);
+  }
+  return map;
+}
+var fmtToTailwind = (s) => s.replace(/__/g, ".").replace(/_/g, "-").replace(/^\$/, "@").replace(/\$/, "/");
+var NEGATIVE_SENTINEL = -1;
+function buildUnits(items, twLocalName, orderMap, variantOrderMap) {
+  const units = [];
+  let i = 0;
+  while (i < items.length) {
+    const cur = items[i];
+    const node = cur.node;
+    if (cur.isCallCallee && isPlainPropAccess(node)) {
+      const callNode = items[i + 1]?.node;
+      if (callNode && isCallLike(callNode)) {
+        const propName = node.property.name;
+        const args = callNode.arguments ?? [];
+        if (args.length === 0 && (propName === "toString" || propName === "valueOf")) {
+          units.push({
+            kind: "boundary",
+            tier: 0,
+            order: 0,
+            anchorNode: node,
+            anchorKey: "object",
+            headNode: callNode,
+            callNode
+          });
+          i += 2;
+          continue;
+        }
+        let variantKey = null;
+        if (propName === "children") variantKey = "*";
+        else if (propName === "descendants") variantKey = "**";
+        else if (propName.endsWith("_named") && args.length === 2) {
+          variantKey = fmtToTailwind(propName.slice(0, -"_named".length));
+        } else if (args.length === 1) {
+          variantKey = fmtToTailwind(propName);
+        }
+        const tier = variantKey !== null ? variantOrderMap?.get(variantKey) : void 0;
+        const order = tier !== void 0 ? firstBareOrderOf(args[args.length - 1], twLocalName, orderMap) : 0;
+        units.push({
+          kind: tier !== void 0 ? "call" : "boundary",
+          tier: tier ?? 0,
+          order,
+          anchorNode: node,
+          anchorKey: "object",
+          headNode: callNode,
+          callNode
+        });
+        i += 2;
+        continue;
+      }
+    }
+    if (!cur.isCallCallee && isPlainPropAccess(node)) {
+      const next = items[i + 1];
+      if (next && !next.isCallCallee && isMemberLike(next.node) && next.node.computed) {
+        units.push({
+          kind: "boundary",
+          tier: 0,
+          order: 0,
+          anchorNode: node,
+          anchorKey: "object",
+          headNode: next.node
+        });
+        i += 2;
+        continue;
+      }
+      const name = node.property.name;
+      const order = orderMap.get(name);
+      units.push({
+        kind: "bare",
+        tier: NEGATIVE_SENTINEL,
+        order: order ?? Number.MAX_SAFE_INTEGER,
+        anchorNode: node,
+        anchorKey: "object",
+        headNode: node
+      });
+      i += 1;
+      continue;
+    }
+    const anchorKey = node.type === "TSNonNullExpression" ? "expression" : "object";
+    units.push({
+      kind: "boundary",
+      tier: 0,
+      order: 0,
+      anchorNode: node,
+      anchorKey,
+      headNode: node,
+      callNode: isCallLike(node) ? node : void 0
+    });
+    i += 1;
+  }
+  return units;
+}
+function compareUnits(a, b) {
+  if (a.tier !== b.tier) return a.tier - b.tier;
+  return a.order - b.order;
+}
+function firstBareOrderOf(argNode, twLocalName, orderMap) {
+  if (!argNode || !isChainLink(argNode)) return Number.MAX_SAFE_INTEGER;
+  const items = [];
+  let cur = argNode;
+  let nextIsCallCallee = false;
+  while (cur && isChainLink(cur)) {
+    items.push({ node: cur, isCallCallee: nextIsCallCallee });
+    nextIsCallCallee = isCallLike(cur);
+    cur = nextChainLink(cur);
+  }
+  const isTwRoot = !!cur && cur.type === "Identifier" && cur.name === twLocalName;
+  const first = items[items.length - 1];
+  if (!isTwRoot || !first || first.isCallCallee || !isPlainPropAccess(first.node)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const name = first.node.property.name;
+  return orderMap.get(name) ?? Number.MAX_SAFE_INTEGER;
 }
 function sortTwChains(root, twLocalName, metadata) {
   const visited = /* @__PURE__ */ new Set();
-  const orderMap = getOrderMap(metadata);
+  const orderMap = getOrderMap(metadata.classOrder);
+  const variantOrderMap = getOrderMap(metadata.variantOrder);
+  if (!orderMap) return;
   function processChain(head) {
     const items = [];
     let cur = head;
@@ -480,46 +580,65 @@ function sortTwChains(root, twLocalName, metadata) {
     const isTwRoot = !!cur && cur.type === "Identifier" && cur.name === twLocalName;
     items.forEach(({ node }) => visited.add(node));
     if (!isTwRoot) {
-      for (const { node } of items) {
-        walkChildren(node);
-      }
-      return;
+      for (const { node } of items) walkChildren(node);
+      return head;
     }
     items.reverse();
+    const rootNode = cur;
+    const units = buildUnits(items, twLocalName, orderMap, variantOrderMap);
+    for (const u of units) {
+      if (!u.callNode) continue;
+      const args = u.callNode.arguments;
+      args.forEach((arg, idx) => {
+        walk(arg, (newArg) => {
+          args[idx] = newArg;
+        });
+      });
+    }
+    let predecessor = rootNode;
     let run = [];
     const flushRun = () => {
-      sortRun(run, orderMap);
+      const sorted = [...run].sort(compareUnits);
+      for (const u of sorted) {
+        u.anchorNode[u.anchorKey] = predecessor;
+        predecessor = u.headNode;
+      }
       run = [];
     };
-    for (const { node, isCallCallee } of items) {
-      if (!isCallCallee && isPlainPropAccess(node)) {
-        run.push(node);
-      } else {
+    for (const u of units) {
+      if (u.kind === "boundary") {
         flushRun();
-        if (isCallLike(node)) {
-          for (const arg of node.arguments) walk(arg);
-        } else if (isMemberLike(node) && node.computed) {
-          walk(node.property);
-        }
+        u.anchorNode[u.anchorKey] = predecessor;
+        predecessor = u.headNode;
+        continue;
       }
+      run.push(u);
     }
     flushRun();
+    return predecessor;
   }
   function walkChildren(node) {
     for (const key of Object.keys(node)) {
       if (key === "parent") continue;
-      walk(node[key]);
+      walk(node[key], (newVal) => {
+        node[key] = newVal;
+      });
     }
   }
-  function walk(value) {
+  function walk(value, onReplace) {
     if (Array.isArray(value)) {
-      for (const item of value) walk(item);
+      value.forEach((item, idx) => {
+        walk(item, (newItem) => {
+          value[idx] = newItem;
+        });
+      });
       return;
     }
     if (!isNode(value)) return;
     const node = value;
     if (isChainLink(node) && !visited.has(node)) {
-      processChain(node);
+      const newHead = processChain(node);
+      if (newHead !== node) onReplace?.(newHead);
       return;
     }
     if (visited.has(node)) return;

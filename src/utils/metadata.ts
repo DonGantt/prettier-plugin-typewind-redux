@@ -9,6 +9,7 @@ export interface TypewindMetadata {
   valueIndex: Record<string, Record<string, string>>;
   rootFontSize: number;
   classOrder: string[];
+  variantOrder?: string[];
   cssProperties?: Record<string, string[]>;
 }
 
