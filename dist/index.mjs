@@ -468,10 +468,12 @@ function buildUnits(items, twLocalName, orderMap, variantOrderMap) {
     if (!cur.isCallCallee && isPlainPropAccess(node)) {
       const next = items[i + 1];
       if (next && !next.isCallCallee && isMemberLike(next.node) && next.node.computed) {
+        const propName = node.property.name;
+        const baseOrder = propName.endsWith("$") ? orderMap.get(propName.slice(0, -1)) : void 0;
         units.push({
-          kind: "boundary",
-          tier: 0,
-          order: 0,
+          kind: baseOrder !== void 0 ? "bare" : "boundary",
+          tier: baseOrder !== void 0 ? NEGATIVE_SENTINEL : 0,
+          order: baseOrder ?? 0,
           anchorNode: node,
           anchorKey: "object",
           headNode: next.node
@@ -525,7 +527,7 @@ function firstBareOrderOf(argNode, twLocalName, orderMap) {
   if (!isTwRoot || !first || first.isCallCallee || !isPlainPropAccess(first.node)) {
     return Number.MAX_SAFE_INTEGER;
   }
-  const name = first.node.property.name;
+  const name = first.node.property.name.replace(/\$$/, "");
   return orderMap.get(name) ?? Number.MAX_SAFE_INTEGER;
 }
 function sortTwChains(root, twLocalName, metadata) {

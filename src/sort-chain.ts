@@ -148,15 +148,27 @@ function buildUnits(
     }
 
     // A bare named utility — unless immediately followed by a computed
-    // bracket (an arbitrary value, e.g. `content_['"*"']`), which must stay
-    // glued to its prefix marker prop rather than being sorted independently.
+    // bracket, which must stay glued to its prefix marker prop rather than
+    // being sorted independently. Two distinct conventions produce this
+    // shape: a true arbitrary value (`content_['"*"']`, prop ends in "_")
+    // has no classOrder entry of its own and must stay an immovable
+    // boundary; an opacity/value modifier on a named class (`bg_accent$
+    // ['10']`, prop ends in "$") resolves to the SAME classOrder position as
+    // its bare base class — verified against the real engine: opacity is
+    // layered via CSS variables and never changes a utility's category/tier,
+    // true for custom theme colors and the built-in palette alike — so it's
+    // sortable, not a boundary.
     if (!cur.isCallCallee && isPlainPropAccess(node)) {
       const next = items[i + 1];
       if (next && !next.isCallCallee && isMemberLike(next.node) && next.node.computed) {
+        const propName = node.property.name as string;
+        const baseOrder = propName.endsWith('$')
+          ? orderMap.get(propName.slice(0, -1))
+          : undefined;
         units.push({
-          kind: 'boundary',
-          tier: 0,
-          order: 0,
+          kind: baseOrder !== undefined ? 'bare' : 'boundary',
+          tier: baseOrder !== undefined ? NEGATIVE_SENTINEL : 0,
+          order: baseOrder ?? 0,
           anchorNode: node,
           anchorKey: 'object',
           headNode: next.node,
@@ -225,7 +237,7 @@ function firstBareOrderOf(
   if (!isTwRoot || !first || first.isCallCallee || !isPlainPropAccess(first.node)) {
     return Number.MAX_SAFE_INTEGER;
   }
-  const name = first.node.property.name as string;
+  const name = (first.node.property.name as string).replace(/\$$/, '');
   return orderMap.get(name) ?? Number.MAX_SAFE_INTEGER;
 }
 
